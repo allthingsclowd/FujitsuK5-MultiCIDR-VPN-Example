@@ -1,0 +1,221 @@
+heat_template_version: 2013-05-23
+# Author: Graham Land
+# Date: 15/11/2017
+# Purpose: Demo 2 x IPSec VPNaaS Connections into a Project - Simulating Customer Connections
+#
+# Twitter: @allthingsclowd
+# Blog: https://allthingscloud.eu
+#
+#
+
+description: Template for Demo 2 x IPSec VPNaaS Connections into a Project - Simulating Customer Connections
+
+# Input parameters
+parameters:
+  k5_image:
+    type: string
+    label: Image name or ID
+    description: Image to be used for compute instance
+    default: "Ubuntu Server 16.04 LTS (English) 01"    
+  flavor:
+    type: string
+    label: Flavor
+    description: Type of instance (flavor) to be used
+    default: "P-1"
+  ssh_key_pair:
+    type: string
+    label: Key name
+    description: Name of key-pair to be used for compute instance
+    default: "LEMP-KP-AZ2"
+  availability_zone:
+    type: string
+    label: Availability Zone
+    description: Region AZ to use
+    default: "uk-1b"
+  my_ip:
+    type: string
+    label: The IP Address (CIDR format) of My PC on the Internet
+    description: PC Internet IP Address (CIDR format)
+    default: "31.53.253.24/32"
+
+# K5 Infrastructure resources to be built
+resources:
+
+  # Create a private network
+  private_network_a:
+    type: OS::Neutron::Net
+    properties:
+      availability_zone: { get_param: availability_zone }
+      name: "CUST-NW1"
+
+  # Create a new subnet on the private network
+  private_subnet_a:
+    type: OS::Neutron::Subnet
+    depends_on: private_network_a
+    properties:
+      availability_zone: { get_param: availability_zone }
+      name: "SubCUST-NW1"
+      network_id: { get_resource: private_network_a }
+      cidr: "172.16.1.0/24"
+      gateway_ip: "172.16.1.1"
+      allocation_pools:
+        - start: "172.16.1.100"
+          end: "172.16.1.150"
+      dns_nameservers: ["8.8.8.8", "8.8.4.4"]
+  
+  # Create a private network
+  private_network_b:
+    type: OS::Neutron::Net
+    properties:
+      availability_zone: { get_param: availability_zone }
+      name: "CUST-NW2"
+
+  # Create a new subnet on the private network
+  private_subnet_b:
+    type: OS::Neutron::Subnet
+    depends_on: private_network_b
+    properties:
+      availability_zone: { get_param: availability_zone }
+      name: "SubCUST-NW2"
+      network_id: { get_resource: private_network_b }
+      cidr: "192.168.2.0/24"
+      gateway_ip: "192.168.2.1"
+      allocation_pools:
+        - start: "192.168.2.100"
+          end: "192.168.2.150"
+      dns_nameservers: ["8.8.8.8", "8.8.4.4"]
+
+  # Create a virtual router
+  virtual_router:
+    type: OS::Neutron::Router
+    properties:
+      availability_zone: { get_param: availability_zone }
+      name: "CUST-VPN1-RTR"
+
+  # Connect an interface on the private network's subnet to the router
+  virtual_router_interface_1:
+    type: OS::Neutron::RouterInterface
+    depends_on: virtual_router
+    properties:
+      router_id: { get_resource: virtual_router }
+      subnet_id: { get_resource: private_subnet_a }
+
+  # Create a virtual router
+  virtual_router2:
+    type: OS::Neutron::Router
+    properties:
+      availability_zone: { get_param: availability_zone }
+      name: "CUST-VPN2-RTR"
+
+  # Connect an interface on the private network's subnet to the router
+  virtual_router2_interface_1:
+    type: OS::Neutron::RouterInterface
+    depends_on: virtual_router2
+    properties:
+      router_id: { get_resource: virtual_router2 }
+      subnet_id: { get_resource: private_subnet_b }
+  
+  # Create security group
+  security_group:
+    type: OS::Neutron::SecurityGroup
+    properties:
+      description: VPN Security Group
+      name: VPN-SG
+      rules:
+       # allow inbound traffic from remote VPN subnet
+        - remote_ip_prefix: 10.11.1.0/24
+          protocol: tcp
+        - remote_ip_prefix: 10.11.1.0/24
+          protocol: icmp      
+      # allow inbound traffic from my remote PC
+        - remote_ip_prefix: { get_param: my_ip }
+          protocol: icmp
+        - remote_ip_prefix: { get_param: my_ip }
+          protocol: tcp
+          port_range_min: 22
+          port_range_max: 22
+
+
+################### Server A ################################################################
+
+  # Create a system volume for use with the server
+  server-A-sys-vol:
+    type: OS::Cinder::Volume
+    properties:
+      availability_zone: { get_param: availability_zone }
+      name: "CUST-S1-boot-vol"
+      size: 3
+      volume_type: "M1"
+      image : { get_param: k5_image }
+
+  server-A-port:
+    type: OS::Neutron::Port
+    depends_on: private_network_a
+    properties:
+      availability_zone: { get_param: availability_zone }
+      network_id: { get_resource: private_network_a }
+      name: "CUST-S1-Port"
+      fixed_ips:
+        - subnet_id: { get_resource: private_subnet_a }
+          ip_address: '172.16.1.25'
+      security_groups: [{ get_resource: security_group }]
+
+  # Build a server using the system volume defined above
+  server-A:
+    type: OS::Nova::Server
+    depends_on: private_network_a
+    properties:
+      availability_zone: { get_param: availability_zone }
+      key_name: { get_param: ssh_key_pair }
+      image: { get_param: k5_image }
+      flavor: { get_param: flavor }
+      admin_user: ubuntu
+      metadata: { "fcx.autofailover": True }
+      block_device_mapping: [{"volume_size": "3", "volume_id": {get_resource: server-A-sys-vol}, "delete_on_termination": True, "device_name": "/dev/vda"}]
+      name: "CUST-S1"
+      networks: 
+         - port: { get_resource: server-A-port }
+
+###########################################################################################################
+
+################### Server B ################################################################
+
+  # Create a system volume for use with the server
+  server-B-sys-vol:
+    type: OS::Cinder::Volume
+    depends_on: private_network_b
+    properties:
+      availability_zone: { get_param: availability_zone }
+      name: "CUST-S2-boot-vol"
+      size: 3
+      volume_type: "M1"
+      image : { get_param: k5_image }
+
+  server-B-port:
+    type: OS::Neutron::Port
+    depends_on: private_network_b
+    properties:
+      availability_zone: { get_param: availability_zone }
+      network_id: { get_resource: private_network_b }
+      name: "CUST-S2-Port"
+      fixed_ips:
+        - subnet_id: { get_resource: private_subnet_b }
+          ip_address: '192.168.2.25'
+      security_groups: [{ get_resource: security_group }]
+
+  # Build a server using the system volume defined above
+  server-B:
+    type: OS::Nova::Server
+    properties:
+      availability_zone: { get_param: availability_zone }
+      key_name: { get_param: ssh_key_pair }
+      image: { get_param: k5_image }
+      flavor: { get_param: flavor }
+      admin_user: ubuntu
+      metadata: { "fcx.autofailover": True }
+      block_device_mapping: [{"volume_size": "3", "volume_id": {get_resource: server-B-sys-vol}, "delete_on_termination": True, "device_name": "/dev/vda"}]
+      name: "CUST-S2"
+      networks: 
+         - port: { get_resource: server-B-port }
+
+###########################################################################################################
