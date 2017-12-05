@@ -1,6 +1,6 @@
 # Two Openstack Heat Templates have been provided to quickly build out the infrastructure below which I used to create the VPNaaS demonstration video
 
-![multivpn_proposalv4](https://user-images.githubusercontent.com/9472095/33608481-8d4d06f4-d9bc-11e7-9a32-14ef998b0436.png)
+![multivpn_proposalv4](https://user-images.githubusercontent.com/9472095/33618728-410a7384-d9db-11e7-96f0-a212f945302c.jpg)
 
 Please note that you will need to amend the input parameters of the Openstack templates to match your target regions.
 Once the stacks have built successfully ensure to do the following before trying to build out the VPNaaS Demo
